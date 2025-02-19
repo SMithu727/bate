@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>AI Debate Arena</title>
+  <style>
+    /* Overall page styling */
+    body {
+      font-family: 'Arial', sans-serif;
+      background: #2a2a2a; /* dark grey base */
+      color: #f0f0f0;
+      margin: 0;
+      padding: 20px;
+    }
+    h1 {
+      text-align: center;
+      margin: 0 0 20px;
+      font-size: 2.5em;
+      color: #e0aaff;
+    }
+    #controls {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    #controls input, .btn {
+      padding: 10px;
+      font-size: 16px;
+      border: none;
+      border-radius: 5px;
+      margin: 5px;
+    }
+    .btn {
+      background: #a18cd1;
+      color: #fff;
+      cursor: pointer;
+      transition: background 0.3s;
+    }
+    .btn:hover {
+      background: #fbc2eb;
+    }
+    #debateInfo {
+      max-width: 600px;
+      margin: 0 auto 20px;
+      padding: 15px;
+      background: #3a3a3a;
+      border-radius: 8px;
+      border: 1px solid #555;
+    }
+    /* Container for canvas and speech bubbles */
+    #canvasContainer {
+      position: relative;
+      width: 800px;
+      margin: 0 auto;
+    }
+    #debateCanvas {
+      border: 2px solid #555;
+      background: #333;
+      display: block;
+      width: 800px;
+      height: 400px;
+    }
+    /* Speech bubble styles */
+    .speechBubble {
+      position: absolute;
+      max-width: 280px;
+      padding: 10px;
+      background: rgba(50, 50, 50, 0.85);
+      border-radius: 10px;
+      border: 1px solid #777;
+      font-size: 14px;
+      line-height: 1.4;
+      transition: all 0.3s;
+      cursor: pointer;
+    }
+    .speechBubble:after {
+      content: "";
+      position: absolute;
+      bottom: -10px;
+      left: 20px;
+      border-width: 10px 10px 0;
+      border-style: solid;
+      border-color: rgba(50, 50, 50, 0.85) transparent;
+    }
+    .speechBubble.expanded {
+      max-width: none;
+    }
+    .expandBtn {
+      display: none;
+      position: absolute;
+      right: 5px;
+      bottom: 5px;
+      background: #a18cd1;
+      color: #fff;
+      border: none;
+      border-radius: 3px;
+      padding: 3px 6px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .speechBubble:hover .expandBtn {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <h1>AI Debate Arena</h1>
+  <div id="controls">
+    <input id="topicInput" type="text" placeholder="Enter debate topic" />
+    <button class="btn" id="startButton">Start Debate</button>
+    <button class="btn" id="nextRoundButton">Next Round</button>
+    <button class="btn" id="refreshButton">Refresh Debate</button>
+  </div>
+  <div id="debateInfo">
+    <p id="debateText">Debate info will appear here...</p>
+  </div>
+  <div id="canvasContainer">
+    <canvas id="debateCanvas" width="800" height="400"></canvas>
+    <!-- Speech bubbles for debaters -->
+    <div id="speechPro" class="speechBubble" style="left: 60px; top: 30px;">
+      <span class="bubbleText">Pro text here...</span>
+      <button class="expandBtn">Expand</button>
+    </div>
+    <div id="speechCon" class="speechBubble" style="right: 60px; top: 30px;">
+      <span class="bubbleText">Con text here...</span>
+      <button class="expandBtn">Expand</button>
+    </div>
+  </div>
+  <script>
+    let frameCount = 0;
+    let votesA = 0, votesB = 0;
+    const MAX_AUDIENCE = 50;
+    let audienceMembers = [];
+
+    // Load debater images
+    const proImg = new Image();
+    proImg.src = "pro.png"; // Make sure this PNG is prepared (confident boy)
+    const conImg = new Image();
+    conImg.src = "cons.png"; // Make sure this PNG is prepared (thoughtful girl)
+
+    // Utility: draw flipped image (horizontal flip)
+    function drawFlippedImage(ctx, img, x, y, width, height) {
+      ctx.save();
+      ctx.translate(x + width, y);
+      ctx.scale(-1, 1);
+      ctx.drawImage(img, 0, 0, width, height);
+      ctx.restore();
+    }
+
+    // Draw debaters using PNG images (flipped so they face each other)
+    function drawDebaters(ctx) {
+      if (proImg.complete) {
+        // Position Pro debater on left side
+        drawFlippedImage(ctx, proImg, 50, 100, 150, 200);
+      }
+      if (conImg.complete) {
+        // Position Con debater on right side
+        drawFlippedImage(ctx, conImg, 600, 100, 150, 200);
+      }
+    }
+
+    // Audience setup: position audience at the bottom of the canvas
+    function setupAudience() {
+      audienceMembers = [];
+      for (let i = 0; i < MAX_AUDIENCE; i++) {
+        let row = Math.floor(i / 10);
+        let col = i % 10;
+        let x = 50 + col * 20; 
+        let y = 320 + row * 15; 
+        let offset = Math.random() * 2 * Math.PI;
+        let ratio = votesA / (votesA + votesB || 1);
+        let color = (i < MAX_AUDIENCE * ratio) ? "#FF6633" : "#3366FF";
+        audienceMembers.push({ x, y, color, offset });
+      }
+    }
+
+    // Draw audience circles with a slight bobbing animation
+    function drawAudience(ctx, frame) {
+      audienceMembers.forEach(member => {
+        let bob = Math.sin(frame * 0.05 + member.offset) * 2;
+        ctx.beginPath();
+        ctx.arc(member.x, member.y + bob, 8, 0, 2 * Math.PI);
+        ctx.fillStyle = member.color;
+        ctx.fill();
+      });
+    }
+
+    // Main animation loop: clear canvas, draw debaters and audience
+    function drawScene() {
+      const canvas = document.getElementById("debateCanvas");
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      
+      drawDebaters(ctx);
+      drawAudience(ctx, frameCount);
+      
+      frameCount++;
+      requestAnimationFrame(drawScene);
+    }
+
+    // Speech bubble functions: update text, truncate if needed
+    function updateSpeechBubbles(proText, conText) {
+      const speechPro = document.getElementById("speechPro");
+      const speechCon = document.getElementById("speechCon");
+      const maxLength = 100;
+      speechPro.querySelector(".bubbleText").textContent = proText.length > maxLength ? proText.substring(0, maxLength) + "..." : proText;
+      speechCon.querySelector(".bubbleText").textContent = conText.length > maxLength ? conText.substring(0, maxLength) + "..." : conText;
+      speechPro.dataset.fullText = proText;
+      speechCon.dataset.fullText = conText;
+    }
+
+    // Expand/collapse functionality for speech bubbles
+    document.querySelectorAll(".expandBtn").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const bubble = e.target.parentElement;
+        if (bubble.classList.contains("expanded")) {
+          bubble.classList.remove("expanded");
+          const fullText = bubble.dataset.fullText;
+          const truncated = fullText.length > 100 ? fullText.substring(0, 100) + "..." : fullText;
+          bubble.querySelector(".bubbleText").textContent = truncated;
+          e.target.textContent = "Expand";
+        } else {
+          bubble.classList.add("expanded");
+          bubble.querySelector(".bubbleText").textContent = bubble.dataset.fullText;
+          e.target.textContent = "Collapse";
+        }
+      });
+    });
+
+    // Backend integration: update debate state and speech bubbles
+    async function updateDebateState() {
+      try {
+        const response = await fetch("http://localhost:5000/get_state");
+        const data = await response.json();
+        document.getElementById("debateText").innerHTML = `
+          <strong>Debate Round:</strong> ${data.round}<br>
+          <strong>Topic:</strong> ${data.topic}<br>
+          <strong>Votes A:</strong> ${data.votes_a} &nbsp;&nbsp;
+          <strong>Votes B:</strong> ${data.votes_b}
+        `;
+        votesA = data.votes_a;
+        votesB = data.votes_b;
+        setupAudience();
+        updateSpeechBubbles(data.debater_a, data.debater_b);
+      } catch (error) {
+        console.error("Error fetching debate state:", error);
+      }
+    }
+
+    // Event listeners for control buttons
+    document.getElementById("startButton").addEventListener("click", () =>
+      fetch("http://localhost:5000/start_debate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ topic: document.getElementById("topicInput").value || "Default Topic" })
+      }).then(updateDebateState)
+    );
+    document.getElementById("nextRoundButton").addEventListener("click", () =>
+      fetch("http://localhost:5000/next_round", { method: "POST" }).then(updateDebateState)
+    );
+    document.getElementById("refreshButton").addEventListener("click", updateDebateState);
+    
+    // Start the animation loop and update state on load
+    requestAnimationFrame(drawScene);
+    window.onload = updateDebateState;
+  </script>
+</body>
+</html>
