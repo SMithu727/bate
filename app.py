@@ -1,16 +1,22 @@
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, Response
 import random
 import os
 from flask_cors import CORS
 from groq import Groq
+from elevenlabs.client import ElevenLabs
 
 app = Flask(__name__, static_url_path='', static_folder='.')
-CORS(app)  # Enable CORS for all routes
+CORS(app)
 
-# Create a Groq client using your API key.
+# Initialize Groq client
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY", "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"))
 
-# Global debate state (for simplicity, using a global dictionary)
+# Initialize ElevenLabs client for TTS
+tts_client = ElevenLabs(api_key=os.getenv("ELEVENLABS_API_KEY", "sk_59b54b6936e0db84a49846c56d6475980014ba026ba67d5b"))
+VOICE_ID_PRO = os.getenv("VOICE_ID_PRO", "5Q0t7uMcjvnagumLfvZi")
+VOICE_ID_CON = os.getenv("VOICE_ID_CON", "9BWtsMINqrJLrRacOk9x")
+
+# Global debate state
 debate_state = {
     'topic': "No topic yet",
     'round': 0,
@@ -20,122 +26,126 @@ debate_state = {
     'votes_b': 0
 }
 
-def generate_argument(topic, stance, round_number):
+def generate_argument(topic, stance, round_number, custom_instruction=None):
     """
-    Use the Groq API (via the Groq Python client) to generate a debate argument.
-
+    Use the Groq API to generate a debate argument with distinct personality styles.
+    
     :param topic: The debate topic.
     :param stance: "pro" or "con".
-    :param round_number: Current round number.
+    :param round_number: The current debate round.
+    :param custom_instruction: Optional custom instructions for the argument.
     :return: Generated argument as a string.
     """
-
-    # Distinct personalities for each stance
     if stance.lower() == "pro":
-        # Example: a humorous, energetic style
-        style_prompt = (
-            "You have a humorous, energetic style. Use casual language and witty lines "
-            "to present your points in an engaging way."
-        )
-        additional_instruction = (
-            "Argue that expensive water does taste different. Emphasize factors like unique mineral content, "
-            "premium purification processes, and an enhanced sensory experience that justifies the higher cost."
-        )
-    else:  # con
-        # Example: a calm, academic style
-        style_prompt = (
-            "You have a calm, academic style. Use formal language, logical structure, and well-researched points "
-            "to present your argument."
-        )
-        additional_instruction = (
-            "Argue that expensive water does not taste different. Emphasize that blind taste tests show no significant "
-            "difference and that any perceived difference is due to marketing and psychological effects."
-        )
+        style_prompt = "Use humor and wit while arguing in favor."
+        default_instruction = "Argue in favor of the topic using compelling points."
+    else:
+        style_prompt = "Use calm, academic reasoning."
+        default_instruction = "Argue against the topic using logical evidence."
 
-    # Combine everything into one prompt
+    instruction = custom_instruction if custom_instruction else default_instruction
+
     prompt = (
         f"You are a skilled debate assistant with a distinct personality. {style_prompt}\n"
-        f"Generate a clear and persuasive {stance.upper()} argument for the debate topic: '{topic}'. "
-        f"Include references to round {round_number} if it adds context. {additional_instruction} "
-        "Keep the answer concise (around 150 words)."
+        f"Generate a clear and persuasive {stance.upper()} argument for the debate topic: '{topic}' (Round {round_number}). "
+        f"{instruction} Keep the answer concise (around 150 words)."
     )
-
     try:
         chat_completion = groq_client.chat.completions.create(
             messages=[
                 {"role": "system", "content": "You are an expert debate assistant."},
                 {"role": "user", "content": prompt}
             ],
-            model="llama-3.3-70b-versatile",  # Use the appropriate model as per Groq's documentation.
+            model="llama-3.3-70b-versatile",
             temperature=0.7,
             max_completion_tokens=200,
             top_p=1,
             stop=None,
             stream=False,
         )
-        argument_text = chat_completion.choices[0].message.content.strip()
+        return chat_completion.choices[0].message.content.strip()
     except Exception as e:
-        argument_text = f"[Error generating {stance} argument: {str(e)}]"
-    
-    return argument_text
+        return f"[Error generating {stance} argument: {str(e)}]"
 
 
+def evaluate_argument(argument):
+    """ Simulate evaluation by returning a random score between 0 and 100. """
+    return random.randint(0, 100)
 
 @app.route('/')
 def index():
-    # Serve the index.html file from the current directory.
     return send_from_directory('.', 'index.html')
 
 @app.route('/start_debate', methods=['POST'])
 def start_debate():
-    """
-    Start a new debate.
-    Expects JSON data with the debate topic:
-      { "topic": "Your debate topic" }
-    """
     data = request.get_json()
     topic = data.get("topic", "Default Topic")
     
+    # Reset debate state
     debate_state['topic'] = topic
     debate_state['round'] = 1
     
-    # Generate initial debate arguments using Groq API
-    debate_state['debater_a'] = generate_argument(topic, "pro", debate_state['round'])
-    debate_state['debater_b'] = generate_argument(topic, "con", debate_state['round'])
+    arg_a = generate_argument(topic, "pro", 1)
+    arg_b = generate_argument(topic, "con", 1)
+    score_a = evaluate_argument(arg_a)
+    score_b = evaluate_argument(arg_b)
     
-    # Simulate initial audience votes
-    debate_state['votes_a'] = random.randint(0, 100)
-    debate_state['votes_b'] = random.randint(0, 100)
+    debate_state['debater_a'] = arg_a
+    debate_state['debater_b'] = arg_b
+    debate_state['votes_a'] = score_a
+    debate_state['votes_b'] = score_b
     
     return jsonify(debate_state)
 
 @app.route('/next_round', methods=['POST'])
 def next_round():
-    """
-    Proceed to the next debate round.
-    Updates the debate state with new AI-generated arguments and random audience votes.
-    """
     debate_state['round'] += 1
     topic = debate_state['topic']
     
-    # Generate new arguments for the next round
-    debate_state['debater_a'] = generate_argument(topic, "pro", debate_state['round'])
-    debate_state['debater_b'] = generate_argument(topic, "con", debate_state['round'])
+    arg_a = generate_argument(topic, "pro", debate_state['round'])
+    arg_b = generate_argument(topic, "con", debate_state['round'])
+    score_a = evaluate_argument(arg_a)
+    score_b = evaluate_argument(arg_b)
     
-    # Simulate updated audience votes for this round
-    debate_state['votes_a'] = random.randint(0, 100)
-    debate_state['votes_b'] = random.randint(0, 100)
+    debate_state['debater_a'] = arg_a
+    debate_state['debater_b'] = arg_b
+    debate_state['votes_a'] = score_a
+    debate_state['votes_b'] = score_b
     
     return jsonify(debate_state)
 
 @app.route('/get_state', methods=['GET'])
 def get_state():
-    """
-    Return the current debate state as JSON.
-    This endpoint is used by the frontend to update the UI.
-    """
     return jsonify(debate_state)
 
+@app.route('/speak/<side>', methods=['GET'])
+def speak(side):
+    """
+    Generate speech audio for the given side ('pro' or 'con') using ElevenLabs TTS.
+    Returns MP3 audio.
+    """
+    if side.lower() == "pro":
+        text = debate_state.get('debater_a', "No argument available.")
+        voice_id = VOICE_ID_PRO
+    elif side.lower() == "con":
+        text = debate_state.get('debater_b', "No argument available.")
+        voice_id = VOICE_ID_CON
+    else:
+        return jsonify({"error": "Invalid side"}), 400
+
+    try:
+        audio_bytes = b""
+        audio_stream = tts_client.text_to_speech.convert_as_stream(
+            text=text,
+            voice_id=voice_id,
+            model_id="eleven_multilingual_v2"
+        )
+        for chunk in audio_stream:
+            if isinstance(chunk, bytes):
+                audio_bytes += chunk
+        return Response(audio_bytes, mimetype="audio/mpeg")
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == '__main__':
-    # Run the Flask server on localhost:5000
     app.run(debug=True)
